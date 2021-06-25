@@ -2,27 +2,48 @@
 
 (defun my-initialize-package ()
   ;; optimization, no need to activate all the packages so early
-  (setq package-enable-at-startup nil)
   (cond
+   ;; @see https://www.gnu.org/software/emacs/news/NEWS.27.1
+   ;; ** Installed packages are now activated *before* loading the init file.
+   ;; As a result of this change, it is no longer necessary to call
+   ;; 'package-initialize' in your init file.
+
+   ;; Previously, a call to 'package-initialize' was automatically inserted
+   ;; into the init file when Emacs was started.  This call can now safely
+   ;; be removed.  Alternatively, if you want to ensure that your init file
+   ;; is still compatible with earlier versions of Emacs, change it to:
+
+   ;; (when (< emacs-major-version 27)
+   ;;   (package-initialize))
+
+   ;; However, if your init file changes the values of 'package-load-list'
+   ;; or 'package-user-dir', or sets 'package-enable-at-startup' to nil then
+   ;; it won't work right without some adjustment:
+   ;; - You can move that code to the early init file (see above), so those
+   ;;   settings apply before Emacs tries to activate the packages.
+   ;; - You can use the new 'package-quickstart' so activation of packages
+   ;;   does not need to pay attention to 'package-load-list' or
+   ;;   'package-user-dir' any more.
    (*emacs27*
-    ;; you need run `M-x package-quickstart-refresh' at least once
-    ;; to generate file "package-quickstart.el'.
-    ;; It contains the `autoload' statements for all packages.
-    ;; Please note once this file is created, you can't automatically
-    ;; install missing package any more
-    ;; You also need need re-generate this file if any package is upgraded.
-    (setq package-quick-start t)
+    ;; "package-quickstart.el" converts path in `load-path' into
+    ;; os dependent path, make it impossible to share same emacs.d between
+    ;; Windows and Cygwin.
+    (unless (or *win64* *cygwin*)
+      ;; you need run `M-x package-quickstart-refresh' at least once
+      ;; to generate file "package-quickstart.el'.
+      ;; It contains the `autoload' statements for all packages.
+      (setq package-quickstart t))
 
     ;; esup need call `package-initialize'
     ;; @see https://github.com/jschaf/esup/issues/84
     (when (or (featurep 'esup-child)
               (fboundp 'profile-dotemacs)
-              (not (file-exists-p (concat my-emacs-d "elpa")))
+              (daemonp)
               (my-vc-merge-p)
               noninteractive)
       (package-initialize)))
    (t
-    ;; @see https://www.gnu.org/software/emacs/news/NEWS.27.1
+    ;; emacs 26
     (package-initialize))))
 
 (my-initialize-package)
@@ -33,7 +54,13 @@
 (defvar melpa-include-packages
   '(ace-window ; latest stable is released on year 2014
     ace-pinyin
+    pos-tip
+    web-mode
+    racket-mode
     auto-package-update
+    web-mode
+    kv
+    esxml ; nov is dependent on latest esxml
     nov
     bbdb
     esup ; Emacs start up profiler
@@ -41,8 +68,10 @@
     company-native-complete
     js2-mode ; need new features
     git-timemachine ; stable version is broken when git rename file
+    highlight-symbol
     undo-fu
     command-log-mode
+    evil ; @see https://github.com/emacs-evil/evil/commit/19cc5f8eef8bfffdec8082b604c7129782acb332
     ;; lsp-mode ; stable version has performance issue, but unstable version sends too many warnings
     vimrc-mode
     rjsx-mode ; fixed the indent issue in jsx
@@ -70,6 +99,7 @@
     molokai-theme
     spacemacs-theme
     leuven-theme
+    elpy ; use latest elpy since Python package API changes
     sublime-themes
     tangotango-theme
     darkburn-theme
@@ -215,6 +245,7 @@ You still need modify `package-archives' in \"init-elpa.el\" to PERMANENTLY use 
 ;; On-demand installation of packages
 (defun require-package (package &optional min-version no-refresh)
   "Ask elpa to install given PACKAGE."
+  (my-ensure 'package)
   (cond
    ((package-installed-p package min-version)
     t)
@@ -252,12 +283,11 @@ You still need modify `package-archives' in \"init-elpa.el\" to PERMANENTLY use 
 (require-package 'nvm)
 (require-package 'writeroom-mode)
 (require-package 'haml-mode)
-(require-package 'scss-mode)
 (require-package 'markdown-mode)
 (require-package 'link)
 (require-package 'connection)
 (require-package 'dictionary) ; dictionary requires 'link and 'connection
-(require-package 'htmlize)
+(require-package 'htmlize) ; prefer stable version
 (require-package 'jade-mode)
 (require-package 'diminish)
 (require-package 'scratch)
@@ -301,7 +331,7 @@ You still need modify `package-archives' in \"init-elpa.el\" to PERMANENTLY use 
 (require-package 'company-native-complete)
 (require-package 'company-c-headers)
 (require-package 'company-statistics)
-(if *emacs26* (require-package 'lsp-mode))
+(require-package 'lsp-mode)
 (require-package 'elpy)
 (require-package 'legalese)
 (require-package 'simple-httpd)
@@ -343,6 +373,7 @@ You still need modify `package-archives' in \"init-elpa.el\" to PERMANENTLY use 
 (require-package 'pdf-tools)
 (require-package 'pyim)
 (require-package 'pyim-wbdict) ; someone may use wubi IME, not me
+(require-package 'pyim-basedict)
 (require-package 'esup)
 
 ;; {{ Fixed expiring GNU ELPA keys
@@ -353,9 +384,8 @@ You still need modify `package-archives' in \"init-elpa.el\" to PERMANENTLY use 
 (require-package 'gnu-elpa-keyring-update)
 ;; }}
 
-(when *emacs26*
-  ;; org => ppt, org v8.3 is required (Emacs 25 uses org v8.2)
-  (require-package 'org-re-reveal))
+;; org => ppt
+(require-package 'org-re-reveal)
 
 (defun my-install-popular-themes (popular-themes)
   "Install POPULAR-THEMES from melpa."
@@ -365,6 +395,9 @@ You still need modify `package-archives' in \"init-elpa.el\" to PERMANENTLY use 
 (require-package 'magit)
 (require-package 'ace-pinyin)
 (require-package 'which-key)
+(require-package 'highlight-symbol)
+;; org-roam requires new version of org-mode bundled with Emacs 27
+(when *emacs27* (require-package 'org-roam))
 
 ;; speed up CI
 (unless my-disable-idle-timer

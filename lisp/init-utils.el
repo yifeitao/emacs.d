@@ -1,5 +1,7 @@
 ;; -*- coding: utf-8; lexical-binding: t; -*-
 
+;; Please note functions here could be used in ~/.custom.el
+
 (defun local-require (pkg)
   "Require PKG in site-lisp directory."
   (unless (featurep pkg)
@@ -29,8 +31,9 @@
           rev
           (make-string level ?^)))
 
-(defun nonempty-lines (s)
-  (split-string s "[\r\n]+" t))
+(defun nonempty-lines (str)
+  "Split STR into lines."
+  (split-string str "[\r\n]+" t))
 
 (defun my-lines-from-command-output (command)
   "Return lines of COMMAND output."
@@ -50,7 +53,7 @@
   "Can use tags file to build imenu function"
   (my-ensure 'counsel-etags)
   (and (locate-dominating-file default-directory "TAGS")
-       ;; latest universal ctags has built in parser for javacript/typescript
+       ;; latest universal ctags has built in parser for javascript/typescript
        (counsel-etags-universal-ctags-p "ctags")
        (memq major-mode '(typescript-mode js-mode javascript-mode))))
 
@@ -78,18 +81,22 @@
     (my-write-to-file str file)))
 
 ;; Handier way to add modes to auto-mode-alist
-(defun add-auto-mode (mode &rest patterns)
+(defun my-add-auto-mode (mode &rest patterns)
   "Add entries to `auto-mode-alist' to use `MODE' for all given file `PATTERNS'."
   (dolist (pattern patterns)
-    (add-to-list 'auto-mode-alist (cons pattern mode))))
+    (push (cons pattern mode) auto-mode-alist)))
 
-(defun add-interpreter-mode (mode &rest patterns)
+(defun my-add-interpreter-mode (mode &rest patterns)
   "Add entries to `interpreter-mode-alist' to use `MODE' for all given file `PATTERNS'."
   (dolist (pattern patterns)
-    (add-to-list 'interpreter-mode-alist (cons pattern mode))))
+    (push (cons pattern mode) interpreter-mode-alist )))
+
+(defmacro my-push-if-uniq (item items)
+  "Push ITEM into ITEMS if it's unique."
+  `(unless (member ,item ,items) (push ,item ,items)))
 
 (defun my-what-face (&optional position)
-  "Shows all faces at POSITION."
+  "Show all faces at POSITION."
   (let* ((face (get-text-property (or position (point)) 'face)))
     (unless (keywordp (car-safe face)) (list face))))
 
@@ -209,8 +216,7 @@ If HINT is empty, use symbol at point."
         (set-visited-file-name new-name)
         (set-buffer-modified-p nil)))))
 
-(defvar load-user-customized-major-mode-hook t)
-(defvar cached-normal-file-full-path nil)
+(defvar my-load-user-customized-major-mode-hook t)
 
 (defun buffer-too-big-p ()
   "Test if current buffer is too big."
@@ -222,82 +228,90 @@ If HINT is empty, use symbol at point."
   (> (nth 7 (file-attributes file))
      (* 5000 64)))
 
-(defvar force-buffer-file-temp-p nil)
+(defvar my-force-buffer-file-temp-p nil)
 (defun is-buffer-file-temp ()
   "If (buffer-file-name) is nil or a temp file or HTML file converted from org file."
   (interactive)
   (let* ((f (buffer-file-name)) (rlt t))
     (cond
-     ((not load-user-customized-major-mode-hook)
+     ((not my-load-user-customized-major-mode-hook)
       (setq rlt t))
-     ((not f)
-      ;; file does not exist at all
+
+     ((and (buffer-name) (string-match "\\* Org SRc" (buffer-name)))
       ;; org-babel edit inline code block need calling hook
       (setq rlt nil))
-     ((string= f cached-normal-file-full-path)
-      (setq rlt nil))
+
+     ((null f)
+      (setq rlt t))
+
      ((string-match (concat "^" temporary-file-directory) f)
       ;; file is create from temp directory
       (setq rlt t))
+
      ((and (string-match "\.html$" f)
            (file-exists-p (replace-regexp-in-string "\.html$" ".org" f)))
       ;; file is a html file exported from org-mode
       (setq rlt t))
-     (force-buffer-file-temp-p
+
+     (my-force-buffer-file-temp-p
       (setq rlt t))
+
      (t
-      (setq cached-normal-file-full-path f)
       (setq rlt nil)))
     rlt))
 
 (defvar my-mplayer-extra-opts ""
   "Extra options for mplayer (ao or vo setup).
-For example, you can '(setq my-mplayer-extra-opts \"-ao alsa -vo vdpau\")'.")
+For example, you can '(setq my-mplayer-extra-opts \"-fs -ao alsa -vo vdpau\")'.")
 
 (defun my-guess-mplayer-path ()
   "Guess cli program mplayer's path."
-  (let* ((rlt "mplayer"))
+  (let* ((program "mplayer")
+         (common-opts "-fs -quiet"))
     (cond
      (*is-a-mac*
-      (setq rlt "mplayer -quiet"))
+      (setq program "mplayer"))
 
      (*linux*
-      (setq rlt (format "mplayer -quiet -stop-xscreensaver %s"
-                        my-mplayer-extra-opts)))
+      (setq program "mplayer -stop-xscreensaver"))
+
      (*cygwin*
       (if (file-executable-p "/cygdrive/c/mplayer/mplayer.exe")
-          (setq rlt "/cygdrive/c/mplayer/mplayer.exe -quiet")
-        (setq rlt "/cygdrive/d/mplayer/mplayer.exe -quiet")))
+          (setq program "/cygdrive/c/mplayer/mplayer.exe")
+        (setq program "/cygdrive/d/mplayer/mplayer.exe")))
 
-     (t ; windows
+     ;; windows
+     (t
       (if (file-executable-p "c:\\\\mplayer\\\\mplayer.exe")
-          (setq rlt "c:\\\\mplayer\\\\mplayer.exe -quiet")
-        (setq rlt "d:\\\\mplayer\\\\mplayer.exe -quiet"))))
-    rlt))
+          (setq program "c:\\\\mplayer\\\\mplayer.exe")
+        (setq program "d:\\\\mplayer\\\\mplayer.exe"))))
 
-(defun my-guess-image-viewer-path (file &optional is-stream)
-  (let* ((rlt "mplayer"))
-    (cond
-     (*is-a-mac*
-      (setq rlt
-            (format "open %s &" file)))
-     (*linux*
-      (setq rlt
-            (if is-stream (format "curl -L %s | feh -F - &" file) (format "feh -F %s &" file))))
-     (*cygwin* (setq rlt "feh -F"))
-     (t ; windows
-      (setq rlt
-            (format "rundll32.exe %s\\\\System32\\\\\shimgvw.dll, ImageView_Fullscreen %s &"
-                    (getenv "SystemRoot")
-                    file))))
-    rlt))
+    (format "%s %s %s" program common-opts my-mplayer-extra-opts)))
+
+(defun my-guess-image-viewer-path (image &optional stream-p)
+  "How to open IMAGE which could be STREAM-P."
+  (cond
+   (*is-a-mac*
+    (format "open %s &" image))
+
+   (*linux*
+    (if stream-p (format "curl -L %s | feh -F - &" image)
+      (format "feh -F %s &" image)))
+
+   (*cygwin*
+    "feh -F")
+
+   (t ; windows
+    (format "rundll32.exe %s\\\\System32\\\\\shimgvw.dll, ImageView_Fullscreen %s &"
+            (getenv "SystemRoot")
+            image))))
 
 (defun my-gclip ()
   "Get clipboard content."
   (let* ((powershell-program (executable-find "powershell.exe")))
     (cond
      ;; Windows
-     ((fboundp 'w32-get-clipboard-data)
+     ((and *win64* (fboundp 'w32-get-clipboard-data))
       ;; `w32-set-clipboard-data' makes `w32-get-clipboard-data' always return null
       (w32-get-clipboard-data))
 
@@ -320,15 +334,16 @@ For example, you can '(setq my-mplayer-extra-opts \"-ao alsa -vo vdpau\")'.")
   (let* ((win64-clip-program (executable-find "clip.exe"))
          ssh-client)
     (cond
-     ;; Windows
-     ((fboundp 'w32-set-clipboard-data)
-      (w32-set-clipboard-data str-val))
-
-     ;; Windows 10
+     ;; Windows 10 or Windows 7
      ((and win64-clip-program)
       (with-temp-buffer
         (insert str-val)
         (call-process-region (point-min) (point-max) win64-clip-program)))
+
+     ;; Windows
+     ((and *win64* (fboundp 'w32-set-clipboard-data))
+      ;; Don't know why, but on Windows 7 this API does not work.
+      (w32-set-clipboard-data str-val))
 
      ;; If Emacs is inside an ssh session, place the clipboard content
      ;; into "~/.tmp-clipboard" and send it back into ssh client
@@ -351,7 +366,7 @@ For example, you can '(setq my-mplayer-extra-opts \"-ao alsa -vo vdpau\")'.")
       (xclip-set-selection 'clipboard str-val)))))
 ;; }}
 
-(defun should-use-minimum-resource ()
+(defun my-should-use-minimum-resource ()
   "Some files should use minimum resource (no syntax highlight, no line number display)."
   (and buffer-file-name
        (string-match-p "\.\\(mock\\|min\\|bundle\\)\.js" buffer-file-name)))
@@ -486,6 +501,12 @@ Copied from 3rd party package evil-textobj."
 
     (cons start (1+ end))))
 
+(defun my-get-char (position)
+  "Get character at POSITION."
+  (save-excursion
+    (goto-char position)
+    (following-char)))
+
 (defun my-pinyinlib-build-regexp-string (str)
   "Build pinyin regexp from STR."
   (my-ensure 'pinyinlib)
@@ -512,21 +533,117 @@ Copied from 3rd party package evil-textobj."
    (t
     (run-with-idle-timer seconds nil func))))
 
-(defun my-get-closest-imenu-item (cands)
-  "Return closest imen item from CANDS."
+(defun my-imenu-item-position (item)
+  "Handle some strange imenu ITEM."
+  (if (markerp item) (marker-position item) item))
+
+(defun my-closest-imenu-item-internal (cands)
+  "Return closest imenu item from CANDS."
   (let* ((pos (point))
          closest)
     (dolist (c cands)
       (let* ((item (cdr c))
              (m (cdr item)))
-        (when (and m (<= (marker-position m) pos))
+        (when (and m (<= (my-imenu-item-position m) pos))
           (cond
            ((not closest)
             (setq closest item))
-           ((< (- pos (marker-position m))
-               (- pos (marker-position (cdr closest))))
+           ((< (- pos (my-imenu-item-position m))
+               (- pos (my-imenu-item-position (cdr closest))))
             (setq closest item))))))
     closest))
+
+(defun my-mark-to-position (&optional position)
+  "Mark text from point to POSITION or end of of line."
+  (set-mark (or position (line-end-position)))
+  (activate-mark))
+
+(defun my-closest-imenu-item ()
+  "Return the closest imenu item."
+  (my-ensure 'counsel)
+  (my-closest-imenu-item-internal (counsel--imenu-candidates)))
+
+(defun my-setup-extra-keymap (extra-fn-list hint fn &rest args)
+  "Map EXTRA-FN-LIST to new keymap and show HINT after calling FN with ARGS."
+  (let ((echo-keystrokes nil))
+    (apply fn args)
+    (message hint)
+    (set-transient-map
+     (let ((map (make-sparse-keymap)))
+       (dolist (item extra-fn-list)
+         (define-key map (kbd (nth 0 item)) (nth 1 item)))
+       map)
+     t)))
+
+;; @see http://emacs.stackexchange.com/questions/14129/which-keyboard-shortcut-to-use-for-navigating-out-of-a-string
+(defun my-font-face-similar-p (f1 f2)
+  "Font face F1 and F2 are similar or same."
+  ;; (message "f1=%s f2=%s" f1 f2)
+  ;; in emacs-lisp-mode, the '^' from "^abde" has list of faces:
+  ;;   (font-lock-negation-char-face font-lock-string-face)
+  (if (listp f1) (setq f1 (nth 1 f1)))
+  (if (listp f2) (setq f2 (nth 1 f2)))
+
+  (or (eq f1 f2)
+      ;; C++ comment has different font face for limit and content
+      ;; f1 or f2 could be a function object because of rainbow mode
+      (and (string-match "-comment-" (format "%s" f1))
+           (string-match "-comment-" (format "%s" f2)))))
+
+(defun my-font-face-at-point-similar-p (font-face-list)
+  "Test if font face at point is similar to any font in FONT-FACE-LIST."
+  (let* ((f (get-text-property (point) 'face))
+         rlt)
+    (dolist (ff font-face-list)
+      (if (my-font-face-similar-p f ff) (setq rlt t)))
+    rlt))
+
+(defun my-pdf-view-goto-page (page)
+  "Go to pdf file's specific PAGE."
+  (cond
+   ((eq major-mode 'pdf-view-mode)
+    (pdf-view-goto-page page))
+   (t
+    (doc-view-goto-page page))))
+
+(defun my-focus-on-pdf-window-then-back (fn)
+  "Focus on pdf window and call function FN then move focus back."
+  (let* ((pdf-window (cl-find-if (lambda (w)
+                                   (let ((file (buffer-file-name (window-buffer w))))
+                                     (and file (string= (file-name-extension file) "pdf"))))
+                                 (my-visible-window-list)))
+         (pdf-file (buffer-file-name (window-buffer pdf-window)))
+         (original-window (get-buffer-window)))
+    (when (and pdf-window pdf-file)
+      ;; select pdf-window
+      (select-window pdf-window)
+      ;; do something
+      (funcall fn pdf-file)
+      ;; back home
+      (select-window original-window))))
+
+(defun my-list-windows-in-frame (&optional frame)
+  "List windows in FRAME."
+  (window-list frame 0 (frame-first-window frame)))
+
+(defun my-visible-window-list ()
+  "Visible window list."
+  (cl-mapcan #'my-list-windows-in-frame (visible-frame-list)))
+
+(defun my-lisp-find-file-or-directory (root regexp prefer-directory-p)
+  "Find files or directories in ROOT whose names match REGEXP.
+If PREFER-DIRECTORY-P is t, return directory; or else, returns file.
+This function is written in pure Lisp and slow."
+  (my-ensure 'find-lisp)
+  (find-lisp-find-files-internal
+   root
+   (lambda (file dir)
+     (let* ((directory-p (file-directory-p (expand-file-name file dir)))
+            (rlt (and (if prefer-directory-p directory-p (not directory-p))
+                      (not (or (string= file ".") (string= file "..")))
+                      (string-match regexp file))))
+       rlt))
+   'find-lisp-default-directory-predicate))
 
 (provide 'init-utils)
 ;;; init-utils.el ends here

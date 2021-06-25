@@ -117,7 +117,10 @@
 (global-set-key (kbd "M-x") 'counsel-M-x)
 (global-set-key (kbd "C-x C-m") 'counsel-M-x)
 
-(defvar my-do-bury-compilation-buffer t
+;; hide the compilation buffer automatically is not a good idea.
+;; if compiling command is a unit test command
+;; It's better let user decide when to hide something
+(defvar my-do-bury-compilation-buffer nil
   "Hide compilation buffer if compile successfully.")
 
 (defun compilation-finish-hide-buffer-on-success (buffer str)
@@ -135,22 +138,57 @@ This function can be re-used by other major modes after compilation."
       (winner-undo)
       (message "NO COMPILATION ERRORS!"))))
 
+(defun my-normal-word-before-point-p (position n fn)
+  "A normal word exists before POSITION.  N characters before current point is checked.
+FN checks these characters belong to normal word characters."
+  (save-excursion
+    (goto-char position)
+    ;; sample N characters before POSITION
+    (let* ((rlt t)
+           (i 0))
+      (while (and (< i n) rlt)
+        (let* ((c (char-before (- (point) i))))
+          (when (not (and c (funcall fn c)))
+            (setq rlt nil)))
+        (setq i (1+ i)))
+      rlt)))
+
 (defun my-electric-pair-inhibit (char)
-  (or
-   ;; input single/double quotes at the end of word
-   (and (memq char '(34 39))
-        (char-before (1- (point)))
-        (eq (char-syntax (char-before (1- (point)))) ?w))
-   (electric-pair-conservative-inhibit char)))
+  "Customize electric pair when input CHAR."
+  (let* (rlt
+         (quote-chars '(34 39))
+         (word-fn (lambda (c)
+                    (or (and (<= ?a c) (<= c ?z))
+                        (and (<= ?A c) (<= c ?Z))
+                        (and (<= ?0 c) (<= c ?9))))))
+    (cond
+     ((and (memq major-mode '(minibuffer-inactive-mode))
+           (not (string-match "^Eval:" (buffer-string))))
+      (setq rlt t))
+
+     ;; Don't insert extra single/double quotes at the end of word
+     ;; Also @see https://github.com/redguardtoo/emacs.d/issues/892#issuecomment-740259242
+     ((and (memq (char-before (point)) quote-chars)
+           (my-normal-word-before-point-p (1- (point)) 4 word-fn))
+      (setq rlt t))
+
+     (t
+      (setq rlt (electric-pair-default-inhibit char))))
+
+    rlt))
 
 (with-eval-after-load 'flymake
   (setq flymake-gui-warnings-enabled nil))
 
+(defvar my-disable-lazyflymake nil
+  "Disable lazyflymake.")
+
 (defun generic-prog-mode-hook-setup ()
+  "Generic programming mode set up."
   (when (buffer-too-big-p)
     ;; Turn off `linum-mode' when there are more than 5000 lines
     (linum-mode -1)
-    (when (should-use-minimum-resource)
+    (when (my-should-use-minimum-resource)
       (font-lock-mode -1)))
 
   (company-ispell-setup)
@@ -158,25 +196,42 @@ This function can be re-used by other major modes after compilation."
   (unless (is-buffer-file-temp)
 
     (unless (featurep 'esup-child)
-      (my-ensure 'lazyflymake)
-      (lazyflymake-start)
+      (unless my-disable-lazyflymake
+        (my-ensure 'lazyflymake)
+        (lazyflymake-start))
 
-      (my-ensure 'wucuo)
-      (wucuo-start))
+      (unless my-disable-wucuo
+        (my-ensure 'wucuo)
+        (setq-local ispell-extra-args (my-detect-ispell-args t))
+        (wucuo-start)))
 
     ;; @see http://xugx2007.blogspot.com.au/2007/06/benjamin-rutts-emacs-c-development-tips.html
     (setq compilation-finish-functions
           '(compilation-finish-hide-buffer-on-success))
 
-    ;; fic-mode has performance issue on 5000 line C++, we can always use swiper instead
+    ;; fic-mode has performance issue on 5000 line C++, use swiper instead
+
     ;; don't spell check double words
     (setq-local wucuo-flyspell-check-doublon nil)
-    ;; enable for all programming modes
-    ;; http://emacsredux.com/blog/2013/04/21/camelcase-aware-editing/
+    ;; @see http://emacsredux.com/blog/2013/04/21/camelcase-aware-editing/
     (unless (derived-mode-p 'js2-mode)
       (subword-mode 1))
 
-    (setq-default electric-pair-inhibit-predicate 'my-electric-pair-inhibit)
+    ;; now css-mode derives from prog-mode
+    ;; see the code of `counsel-css-imenu-setup'
+    (when (counsel-css-imenu-setup)
+      ;; css color
+      (rainbow-mode 1)
+      (imenu-extra-auto-setup
+       ;; post-css mixin
+       '(("Function" "^ *@define-mixin +\\([^ ]+\\)" 1)))
+      (setq beginning-of-defun-function
+            (lambda (arg)
+              (ignore arg)
+              (let* ((closest (my-closest-imenu-item)))
+                (when closest
+                  (goto-char (cdr closest)))))))
+
     (electric-pair-mode 1)
 
     ;; eldoc, show API doc in minibuffer echo area
@@ -185,10 +240,8 @@ This function can be re-used by other major modes after compilation."
     (setq show-trailing-whitespace t)))
 
 (add-hook 'prog-mode-hook 'generic-prog-mode-hook-setup)
-;; some major-modes NOT inherited from prog-mode
-(add-hook 'css-mode-hook 'generic-prog-mode-hook-setup)
 
-;; {{ display long lines in truncated style (end line with $)
+;;; {{ display long lines in truncated style (end line with $)
 (defun truncate-lines-setup ()
   (toggle-truncate-lines 1))
 (add-hook 'grep-mode-hook 'truncate-lines-setup)
@@ -738,6 +791,7 @@ ARG is ignored."
                                 file-name-history
                                 search-ring
                                 regexp-search-ring))
+(setq session-save-file-coding-system 'utf-8)
 (add-hook 'after-init-hook 'session-initialize)
 ;; }}
 
@@ -796,6 +850,8 @@ If the shell is already opened in some buffer, switch to that buffer."
 ;; {{ emms
 (with-eval-after-load 'emms
   (emms-all)
+  ;; use mplayer to play video in full screen mode
+  (push "-fs" emms-player-mplayer-parameters)
   (setq emms-player-list '(emms-player-mplayer-playlist
                            emms-player-mplayer
                            emms-player-mpg321
@@ -862,18 +918,11 @@ If the shell is already opened in some buffer, switch to that buffer."
   (beginning-of-buffer))
 
 ;; {{ unique lines
-(defun uniq-lines ()
-  "Delete duplicate lines in region or buffer."
-  (interactive)
-  (let* ((a (region-active-p))
-         (start (if a (region-beginning) (point-min)))
-         (end (if a (region-end) (point-max))))
-    (save-excursion
-      (while
-          (progn
-            (goto-char start)
-            (re-search-forward "^\\(.*\\)\n\\(\\(.*\n\\)*\\)\\1\n" end t))
-        (replace-match "\\1\n\\2")))))
+;; https://gist.github.com/ramn/796527
+;; uniq-lines
+(defun uniq-lines (start end)
+  (interactive "*r")
+  (delete-duplicate-lines start end))
 ;; }}
 
 (defun my-insert-file-link-from-clipboard ()
@@ -1007,9 +1056,8 @@ might be bad."
 ;; {{ octave
 (defun octave-mode-hook-setup ()
   "Set up of `octave-mode'."
-  (abbrev-mode 1)
-  (auto-fill-mode 1)
-  (if (eq window-system 'x) (font-lock-mode 1)))
+  (setq-local comment-start "%")
+  (setq-local comment-add 0))
 (add-hook 'octave-mode-hook 'octave-mode-hook-setup)
 ;; }}
 
@@ -1020,10 +1068,29 @@ might be bad."
   (setq wgrep-too-many-file-length 2024))
 ;; }}
 
+(defun my-browse-file (file)
+  "Browse FILE as url using `browse-url'."
+  (when (and file (file-exists-p file))
+    (browse-url-generic (concat "file://" file))))
+
 (defun my-browse-current-file ()
-  "Open the current file as a URL using `browse-url'."
+  "Browse current file."
   (interactive)
-  (browse-url-generic (concat "file://" (buffer-file-name))))
+  (my-browse-file buffer-file-name))
+
+(defun my-browse-current-file-as-html ()
+  "Browse current file as html."
+  (interactive)
+  (cond
+   ((or (not buffer-file-name)
+        (not (file-exists-p buffer-file-name))
+        (not (string-match-p "html?$" buffer-file-name)))
+    (let* ((file (make-temp-file "my-browse-file-" nil ".html")))
+      (my-write-to-file (format "<html><body>%s</body></html>" (buffer-string)) file)
+      (my-browse-file file)
+      (my-run-with-idle-timer 4 (lambda (delete-file file)))))
+   (t
+    (my-browse-file buffer-file-name))))
 
 ;; {{ which-key-mode
 (defvar my-show-which-key-when-press-C-h nil)
@@ -1123,10 +1190,10 @@ See https://github.com/RafayGhafoor/Subscene-Subtitle-Grabber."
     (mybigword-show-big-words-from-current-buffer)))
 ;; }}
 
-;; {{ use pdf-tools to view pdf
-(when (and (display-graphic-p) *linux*)
-  (pdf-loader-install))
-;; }}
+;; ;; {{ use pdf-tools to view pdf
+;; (when (and (display-graphic-p) *linux*)
+;;   (pdf-loader-install))
+;; ;; }}
 
 ;; {{ exe path
 (with-eval-after-load 'exec-path-from-shell
@@ -1137,6 +1204,69 @@ See https://github.com/RafayGhafoor/Subscene-Subtitle-Grabber."
   ;; @see https://github.com/purcell/exec-path-from-shell/issues/75
   ;; I don't use those exec path anyway.
   (my-run-with-idle-timer 4 #'exec-path-from-shell-initialize))
+;; }}
+
+(with-eval-after-load 'elec-pair
+  (setq electric-pair-inhibit-predicate 'my-electric-pair-inhibit))
+
+;; {{ markdown
+(defun markdown-mode-hook-setup ()
+  ;; Stolen from http://stackoverflow.com/a/26297700
+  ;; makes markdown tables saner via orgtbl-mode
+  ;; Insert org table and it will be automatically converted
+  ;; to markdown table
+  (my-ensure 'org-table)
+  (defun cleanup-org-tables ()
+    (save-excursion
+      (goto-char (point-min))
+      (while (search-forward "-+-" nil t) (replace-match "-|-"))))
+  (add-hook 'after-save-hook 'cleanup-org-tables nil 'make-it-local)
+  (orgtbl-mode 1) ; enable key bindings
+  ;; don't wrap lines because there is table in `markdown-mode'
+  (setq truncate-lines t))
+(add-hook 'markdown-mode-hook 'markdown-mode-hook-setup)
+;; }}
+
+;; {{ pdf
+(defun my-open-pdf-from-history ()
+  "Open pdf and go to page from history."
+  (interactive)
+  (let* ((link (completing-read "Open pdf:::page: " my-pdf-view-from-history)))
+    (when link
+      (let* ((items (split-string link ":::"))
+             (pdf-file (nth 0 items))
+             (pdf-page (string-to-number (nth 1 items))))
+        (my-ensure 'org)
+        (my-focus-on-pdf-window-then-back
+         (lambda (pdf-file)
+           (when (string= (file-name-base pdf-file) (file-name-base pdf-file))
+             (my-pdf-view-goto-page pdf-page))))))))
+
+(defun my-open-pdf-next-page (&optional n)
+  "Open pdf and go to next N page."
+  (interactive "p")
+  (my-focus-on-pdf-window-then-back
+   (lambda (pdf-file)
+     (pdf-view-next-page n))))
+
+(defun my-open-pdf-previous-page (&optional n)
+  "Open pdf and go to next N page."
+  (interactive "p")
+  (my-focus-on-pdf-window-then-back
+   (lambda (pdf-file)
+     (pdf-view-previous-page n))))
+
+(defun my-open-pdf-goto-page (&optional n)
+  "Open pdf and go to page N.
+Org node property PDF_PAGE_OFFSET is used to calculate physical page number."
+  (interactive "p")
+  (let* ((page-offset (org-entry-get (point) "PDF_PAGE_OFFSET")))
+    (setq page-offset (if page-offset (string-to-number page-offset) 0))
+    (unless n (setq n 1))
+    (setq n (+ n page-offset))
+    (my-focus-on-pdf-window-then-back
+     (lambda (pdf-file)
+       (pdf-view-goto-page n)))))
 ;; }}
 
 (provide 'init-misc)

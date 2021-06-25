@@ -21,7 +21,6 @@
   ;; '$' is part of variable name like '$item'
   (modify-syntax-entry ?$ "w" js-mode-syntax-table))
 
-;; {{ patching imenu in js2-mode
 (defun my-validate-json-or-js-expression (&optional not-json-p)
   "Validate buffer or select region as JSON.
 If NOT-JSON-P is not nil, validate as Javascript expression instead of JSON."
@@ -84,6 +83,7 @@ If HARDCODED-ARRAY-INDEX provided, array index in JSON path is replaced with it.
 ;; }}
 
 (defun my-js2-mode-setup()
+  "Set up javascript."
   (unless (is-buffer-file-temp)
     ;; if use node.js we need nice output
     (js2-imenu-extras-mode)
@@ -103,29 +103,31 @@ If HARDCODED-ARRAY-INDEX provided, array index in JSON path is replaced with it.
   (define-key rjsx-mode-map "<" nil))
 
 ;; {{ js-beautify
-(defun js-beautify (&optional indent-size)
+(defun my-js-beautify (&optional indent-size)
   "Beautify selected region or whole buffer with js-beautify.
 INDENT-SIZE decide the indentation level.
 `sudo pip install jsbeautifier` to install js-beautify.'"
   (interactive "P")
-  (let* ((js-beautify (if (executable-find "js-beautify") "js-beautify"
-                        "jsbeautify")))
+  (let* ((executable (if (executable-find "js-beautify") "js-beautify"
+                       "jsbeautify")))
     ;; detect indentation level
     (unless indent-size
-      (setq indent-size (cond
-                         ((memq major-mode '(js-mode javascript-mode))
-                          js-indent-level)
+      (setq indent-size
+            (cond
+             ((memq major-mode '(js-mode javascript-mode))
+              js-indent-size)
 
-                         ((memq major-mode '(web-mode))
-                          web-mode-code-indent-offset)
+             ((memq major-mode '(web-mode))
+              web-mode-code-indent-offset)
 
-                         ((memq major-mode '(typescript-mode))
-                          typescript-indent-level)
+             ((memq major-mode '(typescript-mode))
+              typescript-indent-size)
 
-                         (t
-                          2))))
+             (t
+              2))))
+    (message "executable=%s indent-size=%s" executable indent-size)
     ;; do it!
-    (run-cmd-and-replace-region (concat "js-beautify"
+    (run-cmd-and-replace-region (concat executable
                                         " --stdin "
                                         " --jslint-happy --brace-style=end-expand --keep-array-indentation "
                                         (format " --indent-size=%d " indent-size)))))
@@ -184,6 +186,7 @@ INDENT-SIZE decide the indentation level.
                 "inject"
                 "isDev"
                 "it"
+                "jest"
                 "jQuery"
                 "jasmine"
                 "key" ; Keysnail
@@ -207,10 +210,7 @@ INDENT-SIZE decide the indentation level.
   (ignore orig-func)
   (ignore args)
   (when (my-use-tags-as-imenu-function-p)
-    (let* ((cands (counsel--imenu-candidates))
-           closest
-           )
-      (setq closest (my-get-closest-imenu-item cands))
+    (let* ((closest (my-closest-imenu-item)))
       (when closest
         (imenu closest)))))
 (advice-add 'typescript-beginning-of-defun :around #'my-typescript-beginning-of-defun-hack)

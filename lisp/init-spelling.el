@@ -123,11 +123,16 @@ When fixing a typo, avoid pass camel case option to cli program."
 (advice-add 'ispell-word :around #'my-ispell-word-hack)
 (advice-add 'flyspell-auto-correct-word :around #'my-ispell-word-hack)
 
+(defvar my-disable-wucuo nil
+  "Disable wucuo.")
+
 (defun text-mode-hook-setup ()
-  ;; Turn off RUN-TOGETHER option when spell check text-mode
-  (setq-local ispell-extra-args (my-detect-ispell-args))
-  (my-ensure 'wucuo)
-  (wucuo-start))
+  "Set up text mode."
+  ;; Turn off RUN-TOGETHER option when spell check text.
+  (unless my-disable-wucuo
+    (setq-local ispell-extra-args (my-detect-ispell-args))
+    (my-ensure 'wucuo)
+    (wucuo-start)))
 (add-hook 'text-mode-hook 'text-mode-hook-setup)
 
 (defun my-clean-aspell-dict ()
@@ -137,6 +142,8 @@ When fixing a typo, avoid pass camel case option to cli program."
          (lines (my-read-lines dict))
          ;; sort words
          (aspell-words (sort (cdr lines) 'string<)))
+    (save-buffer)
+    (sit-for 1)
     (with-temp-file dict
       (insert (format "%s %d\n%s"
                         "personal_ws-1.1 en"
@@ -193,6 +200,7 @@ When fixing a typo, avoid pass camel case option to cli program."
                  (if (and b e (< start e)) (setq rlt nil)))))
              rlt))))
 ;; }}
+
 
 (with-eval-after-load 'wucuo
   ;; {{ wucuo is used to check camel cased code and plain text.  Code is usually written

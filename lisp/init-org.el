@@ -79,6 +79,12 @@
     (setq word-wrap t)))
 (add-hook 'org-mode-hook 'org-mode-hook-setup)
 
+(defvar my-pdf-view-from-history nil
+  "PDF view FROM history which is List of (pdf-path . page-number).")
+
+(defvar my-pdf-view-to-history nil
+  "PDF view TO history which is List of (pdf-path . page-number).")
+
 (with-eval-after-load 'org
   ;; {{
   (defvar my-org-src--saved-temp-window-config nil
@@ -102,9 +108,8 @@ ARG is ignored."
 
   (my-ensure 'org-clock)
 
-  ;; org-re-reveal requires org 8.3 while Emacs 25 uses org 8.2
-  (when *emacs26*
-    (my-ensure 'org-re-reveal))
+  ;; org-re-reveal requires org 8.3
+  (my-ensure 'org-re-reveal)
 
   ;; odt export
   (add-to-list 'org-export-backends 'odt)
@@ -134,9 +139,37 @@ It's value could be customized liked \"/usr/bin/firefox\".
       (apply orig-func args)))
   (advice-add 'org-open-at-point :around #'my-org-open-at-point-hack)
 
+  ;; {{ org pdf link
+  (defun my-org-docview-open-hack (orig-func &rest args)
+    (let* ((link (car args)) path page)
+      (string-match "\\(.*?\\)\\(?:::\\([0-9]+\\)\\)?$" link)
+      (setq path (match-string 1 link))
+      (setq page (and (match-beginning 2)
+                      (string-to-number (match-string 2 link))))
+
+      ;; record FROM
+      (my-focus-on-pdf-window-then-back
+       (lambda (pdf-file)
+         (when (and page (string= (file-name-base pdf-file) (file-name-base path)))
+           ;; select pdf-window
+           (when (and (memq major-mode '(doc-view-mode pdf-view-mode))
+                      (setq pdf-from-page
+                            (if (eq major-mode 'pdf-view-mode) (pdf-view-current-page) (doc-view-current-page)))
+                      (> (abs (- page pdf-from-page)) 2))
+             (my-push-if-uniq (format "%s:::%s" pdf-file pdf-from-page) my-pdf-view-from-history)))))
+      ;; open pdf file
+      (org-open-file path 1)
+      (when page
+        ;; record TO
+        (my-push-if-uniq (format "%s:::%s" path page) my-pdf-view-to-history)
+        ;; goto page
+        (my-pdf-view-goto-page page))))
+  (advice-add 'org-docview-open :around #'my-org-docview-open-hack)
+  ;; }}
+
   (defun my-org-publish-hack (orig-func &rest args)
     "Stop running `major-mode' hook when `org-publish'."
-    (let* ((load-user-customized-major-mode-hook nil))
+    (let* ((my-load-user-customized-major-mode-hook nil))
       (apply orig-func args)))
   (advice-add 'org-publish :around #'my-org-publish-hack)
 
@@ -154,7 +187,7 @@ It's value could be customized liked \"/usr/bin/firefox\".
   (defun my-org-refile-hack (orig-func &rest args)
     "When `org-refile' scans org files,
 skip user's own code in `org-mode-hook'."
-    (let* ((force-buffer-file-temp-p t))
+    (let* ((my-force-buffer-file-temp-p t))
       (apply orig-func args)))
   (advice-add 'org-refile :around #'my-org-refile-hack)
 

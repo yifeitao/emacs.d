@@ -2,11 +2,11 @@
 
 ;; Copyright (C) 2020 Chen Bin
 ;;
-;; Version: 0.0.3
+;; Version: 0.0.4
 ;; Keywords: convenience, languages, tools
 ;; Author: Chen Bin <chenbin DOT sh AT gmail DOT com>
 ;; URL: https://github.com/redguardtoo/lazyflymake
-;; Package-Requires: ((emacs "25.1"))
+;; Package-Requires: ((emacs "26.1"))
 
 ;; This file is NOT part of GNU Emacs.
 
@@ -44,13 +44,21 @@
 ;; The syntax check happens if and only if current buffer is saved.
 ;; Extra command `lazyflymake-list-errors' is provided in light weight mode.
 ;;
-;; This program also sets up flymake for Shell script, Emacs Lisp,
+;; Customize `lazyflymake-ignore-error-function' to ignore errors extracted
+;; from linter output.
+;;
+;; This program also sets up flymake for Shell script, Emacs Lisp, Octave/Matlab,
 ;; and Lua automatically.
 ;;
 ;; Shellcheck (https://github.com/koalaman/shellcheck) is required to check
 ;; shell script.
 ;;
 ;; Lua executable is required to check Lua code.
+;;
+;; MISS_HIT (https://github.com/florianschanda/miss_hit) is required to check
+;; octave/matlab code.
+;;
+;; Tidy (http://www.html-tidy.org/) is require to check html code
 ;;
 
 ;;; Code:
@@ -87,6 +95,12 @@ If it's nil, do not check file at all."
   :type 'integer
   :group 'lazyflymake)
 
+(defcustom lazyflymake-ignore-error-function (lambda (err) (ignore err))
+  "User defined function to ignore some errors.
+The parameter (list file beg end error-message) is passed into this function."
+  :type 'function
+  :group 'lazyflymake)
+
 (defvar lazyflymake-overlays nil "The overlays for syntax errors.")
 
 ;; Timer to run auto-update tags file
@@ -101,14 +115,9 @@ This variable is for debug and unit test only.")
   "Name of the running process")
 
 ;;;###autoload
-(defun lazyflymake-new-flymake-p ()
-  "Test the flymake version."
-  (fboundp 'flymake-start))
-
-;;;###autoload
 (defun lazyflymake-load(file-name-regexp mask &optional force)
   "Load flymake MASK for files matching FILE-NAME-REGEXP.
-If FORCE is t, the existing set up in `flymake-allowed-file-name-masks' is replaced."
+If FORCE is t, the existing set up in `flymake-proc-allowed-file-name-masks' is replaced."
   (let* ((lib (intern (concat "lazyflymake-" (symbol-name mask))))
          (prefix (concat "lazyflymake-" (symbol-name mask)))
          (init-fn (intern (format "%s-%s" prefix "init")))
@@ -124,17 +133,17 @@ If FORCE is t, the existing set up in `flymake-allowed-file-name-masks' is repla
     ;; load the library
     (when (and buffer-file-name
                (string-match file-name-regexp buffer-file-name)
-               ;; respect existing set up in `flymake-allowed-file-name-masks'
+               ;; respect existing set up in `flymake-proc-allowed-file-name-masks'
                (or (eq (length (setq filtered-masks (cl-remove-if
                                                 `(lambda (e)
                                                    (string= (car e) ,file-name-regexp))
-                                                flymake-allowed-file-name-masks)))
-                       (length flymake-allowed-file-name-masks))
+                                                flymake-proc-allowed-file-name-masks)))
+                       (length flymake-proc-allowed-file-name-masks))
                    force))
 
       ;; delete existing set up first
       (when (and filtered-masks force)
-        (setq flymake-allowed-file-name-masks filtered-masks))
+        (setq flymake-proc-allowed-file-name-masks filtered-masks))
 
       ;; library is loaded or functions inside the library are defined
       (unless (or (and (fboundp 'init-fn) (fboundp 'pattern-fn))
@@ -146,10 +155,12 @@ If FORCE is t, the existing set up in `flymake-allowed-file-name-masks' is repla
         (when pattern
           (cond
            ((stringp (car pattern))
+            (if lazyflymake-debug (message "push the pattern to `flymake-err-line-patterns'."))
             (push pattern flymake-err-line-patterns))
            ((listp pattern)
+            (if lazyflymake-debug (message "set pattern to buffer local variable."))
             (setq-local flymake-err-line-patterns pattern)))))
-      (push (list file-name-regexp init-fn) flymake-allowed-file-name-masks))))
+      (push (list file-name-regexp init-fn) flymake-proc-allowed-file-name-masks))))
 
 (defun lazyflymake-proc-buffer (&optional force-erase-p)
   "Get process buffer.  Erase its content if FORCE-ERASE-P is t."
@@ -162,6 +173,11 @@ If FORCE is t, the existing set up in `flymake-allowed-file-name-masks' is repla
 
 (defun lazyflymake-parse-err-line (text)
   "Extract error information from TEXT."
+  (when lazyflymake-debug
+    (message "lazyflymake-parse-err-line called text=%s err-line-patterns=%s"
+             text
+             flymake-err-line-patterns))
+
   (let* (rlt (i 0) )
     (while (and (not rlt)
                 flymake-err-line-patterns
@@ -176,12 +192,16 @@ If FORCE is t, the existing set up in `flymake-allowed-file-name-masks' is repla
              line
              col
              err-text)
+        (when lazyflymake-debug
+          (message "regexp=%s matched=%s" regexp (string-match regexp text)))
         (when (string-match regexp text)
           (setq file (and file-idx (match-string file-idx text)))
           (setq line (and line-idx (match-string line-idx text)))
           (setq col (and col-idx (match-string col-idx text)))
           (setq err-text (and err-text-idx (match-string err-text-idx text)))
-          (when (and file line err-text)
+          (when lazyflymake-debug
+            (message "file=%s line=%s col=%s err-text=%s" file line col err-text))
+          (when (and line err-text)
             (setq col (if col (1- (string-to-number col)) 0))
             (save-excursion
               (goto-char (point-min))
@@ -237,27 +257,17 @@ If FORCE is t, the existing set up in `flymake-allowed-file-name-masks' is repla
 
 (defun lazyflymake-extract-errors (output)
   "Extract errors from command line OUTPUT."
-  (let* (errors)
-    (cond
-     ((and (version< "25" emacs-version) (eq major-mode 'emacs-lisp-mode))
-      (setq output (replace-regexp-in-string "^:elisp-flymake-output-start[\r\n]*" "" output))
-      (unless (string= "" output)
-        (let* ((original-errors (read output)))
-          ;; (read output) may fail
-          (when (listp original-errors)
-            (setq errors (mapcar (lambda (e)
-                                   (list buffer-file-name
-                                         (nth 1 e)
-                                         (save-excursion
-                                           (goto-char (nth 1 e))
-                                           (line-end-position))
-                                         (nth 0 e)))
-                                 original-errors))))))
-     (t
-      ;; extract syntax errors
-      (dolist (l (split-string output "[\r\n]+"  t "[ \t]+"))
-        (let* ((err (lazyflymake-parse-err-line l)))
-          (when err (push err errors))))))
+  (when lazyflymake-debug
+    (message "lazyflymake-extract-errors called. output=%s" output))
+
+  (let* (errors
+         (lines (split-string output "[\r\n]+"  t "[ \t]+")))
+    ;; extract syntax errors
+    (dolist (l lines)
+      (let* ((err (lazyflymake-parse-err-line l)))
+        (if lazyflymake-debug (message "err=%s" err))
+        (when (and err (not (funcall lazyflymake-ignore-error-function err)))
+          (push err errors))))
     errors))
 
 (defun lazyflymake-show-errors (errors)
@@ -342,40 +352,46 @@ Return the running process."
   "Find backend."
   (cl-find-if (lambda (m)
                 (string-match (car m) buffer-file-name))
-              flymake-allowed-file-name-masks))
+              flymake-proc-allowed-file-name-masks))
 
+(defun lazyflymake-run-check-and-report (program args)
+  (let* ((buf (lazyflymake-proc-buffer t))
+         (proc (lazyflymake-run-program program args buf)))
+    (lazyflymake-clear-errors)
+    (set-process-sentinel proc #'lazyflymake-proc-report)
+
+    ;; check emacs lisp code doc in another process
+    (when (and (eq major-mode 'emacs-lisp-mode)
+               (fboundp 'elisp-flymake-checkdoc))
+      (elisp-flymake-checkdoc (lambda (diags)
+                                (let* (errs beg end)
+                                  (dolist (d diags)
+                                    (setq beg (or (flymake--diag-beg d) 0))
+                                    (setq end (or (flymake--diag-end d)
+                                                  (save-excursion
+                                                    (goto-char beg)
+                                                    (line-end-position))))
+                                    (push (list buffer-file-name beg end (flymake--diag-text d))
+                                          errs))
+                                  (when errs
+                                    (lazyflymake-show-errors (nreverse errs))))))))
+  )
+
+;;;###autoload
 (defun lazyflymake-start-buffer-checking-process ()
   "Check current buffer right now."
-  (let* ((backend (lazyflymake-find-backend))
-         (proc (get-process lazyflymake-process-name)))
+  (let* ((backend (lazyflymake-find-backend)))
     (when (and backend
                ;; the previous check process should stopped
-               (not proc))
+               (not (get-process lazyflymake-process-name)))
       (unwind-protect
           (let* ((init-fn (nth 1 backend))
                  (cmd-and-args (funcall init-fn))
                  (program (car cmd-and-args))
-                 (args (nth 1 cmd-and-args))
-                 (buf (lazyflymake-proc-buffer t))
-                 (proc (lazyflymake-run-program program args buf)))
-            (lazyflymake-clear-errors)
-            (set-process-sentinel proc #'lazyflymake-proc-report)
-
-            ;; check emacs lisp code doc in another process
-            (when (and (eq major-mode 'emacs-lisp-mode)
-                       (fboundp 'elisp-flymake-checkdoc))
-              (elisp-flymake-checkdoc (lambda (diags)
-                                        (let* (errs beg end)
-                                          (dolist (d diags)
-                                            (setq beg (or (flymake--diag-beg d) 0))
-                                            (setq end (or (flymake--diag-end d)
-                                                          (save-excursion
-                                                            (goto-char beg)
-                                                            (line-end-position))))
-                                            (push (list buffer-file-name beg end (flymake--diag-text d))
-                                                  errs))
-                                          (when errs
-                                            (lazyflymake-show-errors (nreverse errs))))))))))))
+                 (args (nth 1 cmd-and-args)))
+            ;; the program could be set by flymake but not installed
+            (when (and program (executable-find program))
+              (lazyflymake-run-check-and-report program args)))))))
 
 (defun lazyflymake-check-buffer ()
   "Spell check current buffer."
@@ -519,17 +535,12 @@ Return the running process."
   "Turn on lazyflymake to syntax check code."
   (interactive)
 
-  ;; set up `flymake-allowed-file-name-masks'
+  ;; set up `flymake-proc-allowed-file-name-masks'
 
   ;; Since Emacs 26, `flymake-mode' uses `elisp-flymake-byte-compile'
   ;; and `elisp-flymake-checkdoc'.
   (unless lazyflymake-flymake-mode-on
     (lazyflymake-load "\\.el$" 'elisp))
-
-  ;; set log level to WARNING, so we could see error message in echo area
-  (unless (lazyflymake-new-flymake-p)
-    (advice-add 'flymake-goto-next-error :after #'lazyflymake-echo-error)
-    (advice-add 'flymake-goto-prev-error :after #'lazyflymake-echo-error))
 
   (lazyflymake-load "\\.lua$" 'lua)
 
@@ -539,8 +550,16 @@ Return the running process."
     ;; File with `sh-mode' is shell script
     (lazyflymake-load (lazyflymake-guess-shell-script-regexp) 'shell))
 
+  ;; octave/matlab
+  (when (memq major-mode '(octave-mode matlab-mode))
+    (lazyflymake-load "\\.m$" 'octave))
+
+  ;; html/xml
+  (lazyflymake-load "\\.html?\\'" 'html t)
+  (lazyflymake-load "\\.xml\\'" 'html t)
+
   (when lazyflymake-debug
-    (message "flymake-allowed-file-name-masks=%s" flymake-allowed-file-name-masks))
+    (message "flymake-proc-allowed-file-name-masks=%s" flymake-proc-allowed-file-name-masks))
 
   ;; js-mode has its own linter
   (unless (derived-mode-p 'js2-mode)
@@ -567,11 +586,7 @@ Return the running process."
   "Turn on lazyflymake to syntax check code."
   (interactive)
   (unless lazyflymake-flymake-mode-on
-    (remove-hook 'after-save-hook #'lazyflymake-check-buffer t))
-
-  (unless (lazyflymake-new-flymake-p)
-    (advice-remove 'flymake-goto-next-error #'lazyflymake-echo-error)
-    (advice-remove 'flymake-goto-prev-error #'lazyflymake-echo-error)))
+    (remove-hook 'after-save-hook #'lazyflymake-check-buffer t)))
 
 (provide 'lazyflymake)
 ;;; lazyflymake.el ends here

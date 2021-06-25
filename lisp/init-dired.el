@@ -42,7 +42,7 @@ If no files marked, always operate on current line in dired-mode."
 (with-eval-after-load 'dired-x
   (dolist (file `(((if *unix* "zathura" "open") "pdf" "dvi" "pdf.gz" "ps" "eps")
                   ("7z x" "rar" "zip" "7z") ; "e" to extract, "x" to extract with full path
-                  ((if (not *is-a-mac*) (my-guess-mplayer-path) "open") "ogm"
+                  ((if *is-a-mac* "open" (my-guess-mplayer-path)) "ogm"
                    "avi"
                    "mpg"
                    "rmvb"
@@ -59,7 +59,7 @@ If no files marked, always operate on current line in dired-mode."
                    "3gp"
                    "crdownload"
                    "mp3")
-                  ((concat (my-guess-mplayer-path) " -playlist") "list" "pls")
+                  ((concat (my-guess-mplayer-path) "-fs -playlist") "list" "pls" "m3u")
                   ((if *unix* "feh" "open") "gif" "jpeg" "jpg" "tif" "png" )
                   ((if *unix* "libreoffice" "open") "doc" "docx" "xls" "xlsx" "odt")
                   ("djview" "djvu")
@@ -158,7 +158,7 @@ If SEARCH-IN-DIR is t, try to find the subtitle by searching in directory."
     "Detect subtitles for mplayer."
     (let* ((rlt (apply orig-func args)))
       (when (and (stringp rlt)
-                 (string-match-p "^mplayer -quiet" rlt))
+                 (string-match-p "^mplayer .*-quiet" rlt))
         ;; append subtitle to mplayer cli
         (setq rlt
               (format "%s %s"
@@ -208,5 +208,17 @@ If SEARCH-IN-DIR is t, try to find the subtitle by searching in directory."
   ;; @see https://emacs.stackexchange.com/questions/5649/sort-file-names-numbered-in-dired/5650#5650
   (setq dired-listing-switches "-laGh1v")
   (setq dired-recursive-deletes 'always))
+
+(defun my-computer-sleep-now ()
+  "Make my computer sleep now."
+  (interactive)
+  (let* ((cmd (cond
+               (*cygwin*
+                "rundll32.exe PowrProf.dll,SetSuspendState")
+               (*is-a-mac*
+                "pmset sleepnow")
+               (t
+                "sudo pm-suspend"))))
+    (shell-command cmd)))
 
 (provide 'init-dired)
